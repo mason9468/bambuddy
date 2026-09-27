@@ -182,6 +182,22 @@ export function statesDifferentMaterial(
   return Boolean(required) && Boolean(stated) && required !== stated;
 }
 
+interface FilamentCandidate {
+  ref: PresetRef;
+  typeMatch: boolean;
+  inInventory: boolean;
+  score: number;
+}
+
+// Compare within a compatibility partition, not with additive bonuses:
+// inventory must never promote an unknown material above a known match.
+function isBetterFilament(candidate: FilamentCandidate, best: FilamentCandidate | null): boolean {
+  if (best == null) return true;
+  if (candidate.typeMatch !== best.typeMatch) return candidate.typeMatch;
+  if (candidate.inInventory !== best.inInventory) return candidate.inInventory;
+  return candidate.score > best.score;
+}
+
 export function pickFilamentForSlot(
   by: UnifiedPresetsResponse,
   required: { type: string; color: string },
@@ -189,11 +205,12 @@ export function pickFilamentForSlot(
   compatIndex: PrinterCompatibilityIndex,
   inventory?: FilamentInventoryIdentity | null,
 ): PresetRef | null {
-  // Score every filament preset against the plate slot's required (type,
-  // colour) and pick the highest. Mirrors the AMS slot-mapping match in the
-  // print/schedule modal: type match dominates, exact-colour-match bumps over
-  // similar-colour-match, and a small per-tier bonus breaks ties so cloud
-  // user customisations win over standard bundled fallbacks of equal merit.
+  // Within each compatibility partition, rank by material type match first,
+  // inventory membership second, then the existing colour/tier score. Keep
+  // these priorities separate so inventory or source-tier bonuses cannot
+  // make an unknown material outrank a known match. Exact colour beats a
+  // similar colour, and the per-tier bonus prefers user customisations over
+  // bundled fallbacks of otherwise equal merit.
   //
   // Compatibility is a hard partition, not a soft penalty (#1851). The legacy
   // -100 demote let a printer-mismatched preset still win when the plate's
@@ -229,57 +246,46 @@ export function pickFilamentForSlot(
   const reqType = required.type.trim().toUpperCase();
   const reqColor = normalizeColorForCompare(required.color);
 
-  let bestCompatible: { ref: PresetRef; score: number } | null = null;
-  let bestCompatibleInventory: { ref: PresetRef; score: number } | null = null;
-  let bestMismatch: { ref: PresetRef; score: number } | null = null;
-  let bestMismatchInventory: { ref: PresetRef; score: number } | null = null;
-  let bestWrongType: { ref: PresetRef; score: number } | null = null;
-  let bestWrongTypeInventory: { ref: PresetRef; score: number } | null = null;
+  let bestCompatible: FilamentCandidate | null = null;
+  let bestMismatch: FilamentCandidate | null = null;
+  let bestWrongType: FilamentCandidate | null = null;
   for (const tier of SLICE_MODAL_TIER_ORDER) {
     for (const p of by[tier].filament) {
       let score = 0;
       const presetType = (p.filament_type ?? '').trim().toUpperCase();
       const presetColor = normalizeColorForCompare(p.filament_colour ?? '');
-      if (reqType && presetType && reqType === presetType) score += 10;
+      const typeMatch = Boolean(reqType) && reqType === presetType;
       if (reqColor && presetColor) {
         if (presetColor === reqColor) score += 5;
         else if (colorsAreSimilar(p.filament_colour ?? '', required.color)) score += 2;
       }
       score += TIER_BONUS[tier];
-      const ref = { source: p.source, id: p.id };
-      const represented = filamentPresetIsInInventory(p, inventory);
+      const candidate: FilamentCandidate = {
+        ref: { source: p.source, id: p.id },
+        typeMatch,
+        inInventory: filamentPresetIsInInventory(p, inventory),
+        score,
+      };
       if (statesDifferentMaterial(p, reqType)) {
-        if (bestWrongType == null || score > bestWrongType.score) {
-          bestWrongType = { ref, score };
-        }
-        if (represented && (bestWrongTypeInventory == null || score > bestWrongTypeInventory.score)) {
-          bestWrongTypeInventory = { ref, score };
+        if (isBetterFilament(candidate, bestWrongType)) {
+          bestWrongType = candidate;
         }
       } else if (presetCompatibility(p, 'filament', printerName, compatIndex) === 'mismatch') {
-        if (bestMismatch == null || score > bestMismatch.score) {
-          bestMismatch = { ref, score };
-        }
-        if (represented && (bestMismatchInventory == null || score > bestMismatchInventory.score)) {
-          bestMismatchInventory = { ref, score };
+        if (isBetterFilament(candidate, bestMismatch)) {
+          bestMismatch = candidate;
         }
       } else {
-        if (bestCompatible == null || score > bestCompatible.score) {
-          bestCompatible = { ref, score };
-        }
-        if (represented && (bestCompatibleInventory == null || score > bestCompatibleInventory.score)) {
-          bestCompatibleInventory = { ref, score };
+        if (isBetterFilament(candidate, bestCompatible)) {
+          bestCompatible = candidate;
         }
       }
     }
   }
-  if (bestCompatibleInventory != null) return bestCompatibleInventory.ref;
   if (bestCompatible != null) return bestCompatible.ref;
-  if (bestMismatchInventory != null) return bestMismatchInventory.ref;
   if (bestMismatch != null) return bestMismatch.ref;
   // Nothing of the right material anywhere. Better a wrong-material preset the
   // user can see and change in the dropdown than a null the modal renders as
   // an empty slot, which is what shipped before the partition existed.
-  if (bestWrongTypeInventory != null) return bestWrongTypeInventory.ref;
   if (bestWrongType != null) return bestWrongType.ref;
   // Final fallback when there are no filament presets at all (empty
   // registry) — pickDefault returns null in that case too, but keeping the

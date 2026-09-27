@@ -152,6 +152,86 @@ describe('pickFilamentForSlot — material is a hard partition (#2982)', () => {
 });
 
 describe('pickFilamentForSlot — active inventory preference (#3157)', () => {
+  it.each([X1C, A1])('prefers known PETG over inventory-linked cloud PLA with no type for %s', (printer) => {
+    const presets = unified({
+      cloud: {
+        ...empty(),
+        filament: [{ id: 'cloud-pla', name: 'Bambu PLA Basic @BBL X1C', source: 'cloud' }],
+      },
+      standard: {
+        ...empty(),
+        filament: [{ id: 'std-petg', name: 'Generic PETG @BBL X1C', source: 'standard', filament_type: 'PETG' }],
+      },
+    });
+    const inventory = buildFilamentInventoryIdentity([
+      { slicer_filament: 'cloud-pla', slicer_filament_name: 'Bambu PLA Basic' },
+    ]);
+    const required = { type: 'PETG', color: '#FFFFFF' };
+
+    // X1C exercises compatible candidates; A1 exercises the existing
+    // wrong-printer fallback when no printer-compatible preset is available.
+    expect(pickFilamentForSlot(presets, required, printer, index)).toEqual({ source: 'standard', id: 'std-petg' });
+    expect(pickFilamentForSlot(presets, required, printer, index, inventory)).toEqual({ source: 'standard', id: 'std-petg' });
+  });
+
+  it.each(['local', 'orca_cloud', 'cloud'] as const)(
+    'does not let inventory, colour or the %s tier outweigh a known material match',
+    (source) => {
+      const presets = unified();
+      presets[source].filament = [{
+        id: 'unknown-type', name: 'Bambu PLA Basic @BBL X1C', source,
+        filament_type: null, filament_colour: '#FF0000',
+      }];
+      presets.standard.filament = [{
+        id: 'known-petg', name: 'Generic PETG @BBL X1C', source: 'standard',
+        filament_type: ' petg ', filament_colour: '#FFFFFF',
+      }];
+      const inventory = buildFilamentInventoryIdentity([{ slicer_filament: 'unknown-type' }]);
+
+      expect(pickFilamentForSlot(
+        presets, { type: ' PETG ', color: '#FF0000' }, X1C, index, inventory,
+      )).toEqual({ source: 'standard', id: 'known-petg' });
+    },
+  );
+
+  it.each(['PLA', ''])('keeps inventory preference when both type-match results are false (required: %s)', (type) => {
+    const presets = unified({
+      local: {
+        ...empty(),
+        filament: [{ id: 'unowned', name: 'Unowned @BBL X1C', source: 'local', filament_colour: '#FF0000' }],
+      },
+      standard: {
+        ...empty(),
+        filament: [{ id: 'owned', name: 'Owned @BBL X1C', source: 'standard', filament_type: null }],
+      },
+    });
+    const inventory = buildFilamentInventoryIdentity([{ slicer_filament: 'owned' }]);
+
+    expect(pickFilamentForSlot(
+      presets, { type, color: '#FF0000' }, X1C, index, inventory,
+    )).toEqual({ source: 'standard', id: 'owned' });
+  });
+
+  it('uses the existing score when type match and inventory preference tie', () => {
+    const presets = unified({
+      cloud: {
+        ...empty(),
+        filament: [{ id: 'cloud-petg', name: 'Bambu PETG @BBL X1C', source: 'cloud', filament_type: 'PETG' }],
+      },
+      standard: {
+        ...empty(),
+        filament: [{ id: 'std-petg', name: 'Generic PETG @BBL X1C', source: 'standard', filament_type: 'PETG' }],
+      },
+    });
+    const inventory = buildFilamentInventoryIdentity([
+      { slicer_filament: 'cloud-petg' }, { slicer_filament: 'std-petg' },
+    ]);
+
+    expect(pickFilamentForSlot(
+      presets, { type: 'PETG', color: '' }, X1C, index, inventory,
+    )).toEqual({ source: 'cloud', id: 'cloud-petg' });
+  });
+
   it('prefers an inventory-backed preset within the valid material/printer partition', () => {
     const presets = standard('filament', [
       { name: 'Bambu PLA Matte @BBL A1', filament_type: 'PLA', filament_colour: '#FF0000' },

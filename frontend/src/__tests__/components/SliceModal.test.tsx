@@ -2331,6 +2331,37 @@ describe('SliceModal — filament presets represented by active inventory (#3157
     expect(screen.getByText('1 hidden')).toBeInTheDocument();
   });
 
+  it('keeps known PETG selected and submits it instead of inventory-linked cloud PLA with no type', async () => {
+    const presets = structuredClone(inventoryPresets);
+    presets.cloud.filament = [{
+      id: 'cloud-pla', name: 'Bambu PLA Basic @BBL X1C', source: 'cloud',
+    }];
+    presets.standard.filament = [{
+      id: 'std-petg', name: 'Generic PETG @BBL X1C', source: 'standard', filament_type: 'PETG',
+    }];
+    mockApi.getSlicerPresets.mockResolvedValue(presets);
+    mockApi.getSpools.mockResolvedValue([
+      { slicer_filament: 'cloud-pla', slicer_filament_name: 'Bambu PLA Basic' },
+    ]);
+    mockApi.getLibraryFileFilamentRequirements.mockResolvedValue({
+      file_id: 100, filename: 'Cube.3mf', plate_id: 1,
+      filaments: [{ slot_id: 1, type: 'PETG', color: '#FFFFFF', used_grams: 10, used_meters: 3 }],
+    });
+
+    await open();
+    await waitFor(() => expect(presetSelects()[3].value).toBe('standard:std-petg'));
+    expect(filamentOptionNames()).toContain('Generic PETG @BBL X1C');
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /^Slice$/ }));
+
+    await waitFor(() => {
+      expect(mockApi.sliceLibraryFile).toHaveBeenCalled();
+      expect(mockApi.sliceLibraryFile.mock.calls[0][1].filament_presets).toEqual([
+        { source: 'standard', id: 'std-petg' },
+      ]);
+    });
+  });
+
   it('reveals non-inventory compatible profiles with Show all and keeps a manual override visible', async () => {
     const user = userEvent.setup();
     await open();

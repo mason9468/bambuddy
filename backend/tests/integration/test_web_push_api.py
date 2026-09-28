@@ -172,9 +172,11 @@ async def test_restore_rejects_bad_push_key_before_stopping_services(async_clien
 
 @pytest.mark.asyncio
 @pytest.mark.integration
-@pytest.mark.parametrize("signed_in", [False, True])
-async def test_push_requires_existing_notification_permissions(async_client, db_session, signed_in):
-    from backend.app.core.auth import get_password_hash
+@pytest.mark.parametrize("credentials", ["missing", "invalid", "wrong_scope", "expired", "revoked"])
+async def test_push_requires_existing_notification_permissions(async_client, db_session, credentials):
+    from datetime import timedelta
+
+    from backend.app.core.auth import create_access_token, get_password_hash
     from backend.app.models.settings import Settings
     from backend.app.models.user import User
 
@@ -192,7 +194,7 @@ async def test_push_requires_existing_notification_permissions(async_client, db_
     )
     await db_session.commit()
     headers = {}
-    if signed_in:
+    if credentials in ("wrong_scope", "revoked"):
         login = await async_client.post(
             "/api/v1/auth/login",
             json={
@@ -202,8 +204,17 @@ async def test_push_requires_existing_notification_permissions(async_client, db_
         )
         assert login.status_code == 200
         headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
-    expected = 403 if signed_in else 401
-    assert (await async_client.get("/api/v1/notifications/webpush/public-key", headers=headers)).status_code == expected
+    elif credentials == "invalid":
+        headers = {"Authorization": "Bearer invalid-token"}
+    elif credentials == "expired":
+        token = create_access_token({"sub": "push-no-permissions"}, expires_delta=timedelta(seconds=-1))
+        headers = {"Authorization": f"Bearer {token}"}
+    if credentials == "revoked":
+        logout = await async_client.post("/api/v1/auth/logout", headers=headers)
+        assert logout.status_code == 200
+    expected = 403 if credentials == "wrong_scope" else 401
+    response = await async_client.get("/api/v1/notifications/webpush/public-key", headers=headers)
+    assert response.status_code == expected
     for path in ("/", "/test-config"):
         response = await async_client.post(
             "/api/v1/notifications" + path,

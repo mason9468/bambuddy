@@ -119,3 +119,65 @@ test('click opens the app if listing windows fails', async () => {
   await click(w);
   assert.deepEqual(w.opened, ['https://bambuddy.example/']);
 });
+
+const registrationSource = fs.readFileSync(path.join(__dirname, '../public/sw-register.js'), 'utf8');
+
+async function openSpoolBuddy(registrations, pathname = '/spoolbuddy') {
+  const effects = { unregistered: [], deleted: [], reloads: 0 };
+  const regs = registrations.map(({ subscription, lookupFails, unregisters = true }, i) => ({
+    pushManager: {
+      getSubscription: async () => {
+        if (lookupFails) throw new Error('Subscription lookup unavailable');
+        return subscription ?? null;
+      },
+    },
+    unregister: async () => {
+      effects.unregistered.push(i);
+      return unregisters;
+    },
+  }));
+  vm.runInNewContext(registrationSource, {
+    navigator: { serviceWorker: { getRegistrations: async () => regs } },
+    location: { pathname, reload: () => { effects.reloads++; } },
+    caches: { keys: async () => ['bambuddy-cache'], delete: async name => effects.deleted.push(name) },
+    console: { warn() {} },
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  return effects;
+}
+
+test('opening SpoolBuddy preserves push registrations and their caches without reloading', async () => {
+  for (const pathname of ['/spoolbuddy', '/spoolbuddy/settings']) {
+    assert.deepEqual(await openSpoolBuddy([{ subscription: {} }], pathname), {
+      unregistered: [], deleted: [], reloads: 0,
+    });
+  }
+});
+
+test('SpoolBuddy still removes unsubscribed workers and clears their caches', async () => {
+  assert.deepEqual(await openSpoolBuddy([{}, {}]), {
+    unregistered: [0, 1], deleted: ['bambuddy-cache'], reloads: 1,
+  });
+});
+
+test('mixed registrations retain push and do not repeatedly reload SpoolBuddy', async () => {
+  assert.deepEqual(await openSpoolBuddy([{ subscription: {} }, {}]), {
+    unregistered: [1], deleted: [], reloads: 1,
+  });
+  assert.deepEqual(await openSpoolBuddy([{ subscription: {} }]), {
+    unregistered: [], deleted: [], reloads: 0,
+  });
+});
+
+test('a failed subscription lookup preserves that registration while cleaning up others', async () => {
+  assert.deepEqual(await openSpoolBuddy([{ lookupFails: true }, {}]), {
+    unregistered: [1], deleted: [], reloads: 1,
+  });
+});
+
+test('no registrations or unsuccessful unregistration does not reload or clear caches', async () => {
+  assert.deepEqual(await openSpoolBuddy([]), { unregistered: [], deleted: [], reloads: 0 });
+  assert.deepEqual(await openSpoolBuddy([{ unregisters: false }]), {
+    unregistered: [0], deleted: [], reloads: 0,
+  });
+});

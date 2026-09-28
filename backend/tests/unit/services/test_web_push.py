@@ -210,9 +210,14 @@ def test_push_write_failure_rolls_back_mfa_key(tmp_path, monkeypatch):
 
 def test_failed_key_install_does_not_leave_new_files(tmp_path, monkeypatch):
     monkeypatch.setattr(web_push, "resolve_data_dir", lambda: tmp_path)
-    with pytest.raises(OSError), web_push.preserve_encryption_keys_on_error():
-        (tmp_path / ".mfa_encryption_key").write_bytes(b"new")
-        raise OSError("installation failed")
+
+    def fail_key_install():
+        with web_push.preserve_encryption_keys_on_error():
+            (tmp_path / ".mfa_encryption_key").write_bytes(b"new")
+            raise OSError("installation failed")
+
+    with pytest.raises(OSError, match="installation failed"):
+        fail_key_install()
     assert not (tmp_path / ".mfa_encryption_key").exists()
 
 

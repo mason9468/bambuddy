@@ -59,7 +59,8 @@ async def test_push_provider_crud_and_redaction(async_client, db_session, monkey
     response = await async_client.patch(f"{base}/{identifier}", json={"provider_type": "ntfy"})
     assert response.status_code == 200
     assert response.json()["config"] == {}
-    assert (await async_client.delete(f"{base}/{identifier}")).status_code == 200
+    response = await async_client.delete(f"{base}/{identifier}")
+    assert response.status_code == 200
 
 
 @pytest.mark.asyncio

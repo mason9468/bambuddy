@@ -192,6 +192,7 @@ def get_vapid_private_key() -> bytes:
             try:
                 os.link(temporary, path)
             except FileExistsError:
+                # Another worker published the key first; read and validate it below.
                 pass
         finally:
             os.unlink(temporary)

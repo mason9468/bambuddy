@@ -1,6 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { compareFwVersions } from '../utils/firmwareVersion';
+import { mapModelCode } from '../utils/printerModel';
 import { formatPrintName } from '../utils/printName';
 import { isBedSlinger } from '../utils/bedSlinger';
 import { computePopoverPosition, type PopoverPosition } from '../utils/popoverPosition';
@@ -56,6 +57,19 @@ const WAITING_REASON_KEYS: Record<string, string> = {
 
 function waitingReasonKey(reason: string | null | undefined): string | undefined {
   return reason ? WAITING_REASON_KEYS[reason] : undefined;
+}
+
+// Why a scheduled drying failed, by the code the scheduler stores. A row with
+// no code (failed before codes existed) or an unknown one shows the backend's
+// English error_message instead.
+const FAILED_REASON_KEYS: Record<string, string> = {
+  screen_only: 'printers.drying.screenOnly',
+  unsupported: 'printers.drying.notSupported',
+  did_not_start: 'printers.drying.scheduleFailedDidNotStart',
+};
+
+function failedReasonKey(code: string | null | undefined): string | undefined {
+  return code ? FAILED_REASON_KEYS[code] : undefined;
 }
 
 // Which cannot-dry code to name when the firmware reports several at once.
@@ -123,6 +137,7 @@ import {
   Info,
   Cable,
   Flame,
+  Hourglass,
   Repeat,
   Snowflake,
   Gauge,
@@ -159,7 +174,7 @@ import { EmbeddedCameraViewer } from '../components/EmbeddedCameraViewer';
 import { CameraWall } from '../components/CameraWall';
 import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu';
 import { MQTTDebugModal } from '../components/MQTTDebugModal';
-import { HMSErrorModal, filterKnownHMSErrors } from '../components/HMSErrorModal';
+import { HMSErrorModal, filterKnownHMSErrors, isSevereHMSError } from '../components/HMSErrorModal';
 import { AiDetectionModal } from '../components/AiDetectionModal';
 import { aiDetectionClass, type AiDetection } from '../utils/aiDetection';
 import { PrinterQueueWidget } from '../components/PrinterQueueWidget';
@@ -186,6 +201,7 @@ import { FilamentSlotCircle } from '../components/FilamentSlotCircle';
 import { Collapsible } from '../components/Collapsible';
 import { ConnectionDiagnosticModal, DiagnosticChecklist } from '../components/ConnectionDiagnostic';
 import { getColorName, parseFilamentColor, isLightColor } from '../utils/colors';
+import { NumberInput } from '../components/NumberInput';
 
 // The status filter's options, and the only values it may hold. One list so a
 // saved filter cannot be validated against a set the dropdown has since moved
@@ -1732,51 +1748,6 @@ const MODELS_WITH_EXHAUST_LABEL: ReadonlySet<string> = new Set([
   'X2D',
 ]);
 
-// Map SSDP model codes to display names
-function mapModelCode(ssdpModel: string | null): string {
-  if (!ssdpModel) return '';
-  const modelMap: Record<string, string> = {
-    // H2 Series
-    'O1D': 'H2D',
-    'O1E': 'H2D Pro',
-    'O2D': 'H2D Pro',
-    'O1C': 'H2C',
-    'O1C2': 'H2C',
-    'O1S': 'H2S',
-    // X1 Series
-    'BL-P001': 'X1C',
-    'BL-P002': 'X1',
-    'BL-P003': 'X1E',
-    // X2 Series
-    'N6': 'X2D',
-    // A2 Series
-    'N9': 'A2L',
-    // P Series
-    'C11': 'P1S',
-    'C12': 'P1P',
-    'C13': 'P2S',
-    // A1 Series
-    'N2S': 'A1',
-    'N1': 'A1 Mini',
-    // Direct matches
-    'X1C': 'X1C',
-    'X1': 'X1',
-    'X1E': 'X1E',
-    'X2D': 'X2D',
-    'P1S': 'P1S',
-    'P1P': 'P1P',
-    'P2S': 'P2S',
-    'A1': 'A1',
-    'A1 Mini': 'A1 Mini',
-    'A2L': 'A2L',
-    'H2D': 'H2D',
-    'H2D Pro': 'H2D Pro',
-    'H2C': 'H2C',
-    'H2S': 'H2S',
-  };
-  return modelMap[ssdpModel] || ssdpModel;
-}
-
 // ─── AMS Name Hover Card ──────────────────────────────────────────────────────
 // Wraps the AMS label (e.g. "AMS-A") and shows a popup with:
 //  • User-defined friendly name (editable, protected by printers:update)
@@ -2048,6 +2019,7 @@ function ScheduledDryingBanner({ printerId, dryingActive, timeFormat }: { printe
       {rows.map(s => {
         const failed = s.status === 'failed';
         const reasonKey = waitingReasonKey(s.waiting_reason);
+        const failedKey = failedReasonKey(s.error_code);
         return (
           <div
             key={s.id}
@@ -2059,7 +2031,7 @@ function ScheduledDryingBanner({ printerId, dryingActive, timeFormat }: { printe
             <span className={failed ? 'text-red-700 dark:text-red-400' : 'text-amber-700 dark:text-amber-400'}>
               {failed ? (
                 t('printers.drying.scheduleFailedReason', {
-                  reason: s.error_message || t('printers.drying.scheduleFailedUnknown'),
+                  reason: failedKey ? t(failedKey) : s.error_message || t('printers.drying.scheduleFailedUnknown'),
                 })
               ) : (
                 <>
@@ -3963,7 +3935,7 @@ function PrinterCard({
                     {/* Connection indicator dot for compact mode */}
                     {viewMode === 'compact' && (() => {
                       const hmsErrors = status?.connected && status.hms_errors ? filterKnownHMSErrors(status.hms_errors) : [];
-                      const hasSevere = hmsErrors.some(e => e.severity <= 2);
+                      const hasSevere = hmsErrors.some(isSevereHMSError);
                       const hasWarning = hmsErrors.length > 0;
                       const pipColor = !status?.connected
                         ? 'bg-status-error'
@@ -4109,7 +4081,7 @@ function PrinterCard({
                     onClick={() => setShowHMSModal(true)}
                     className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs cursor-pointer hover:opacity-80 transition-opacity ${
                       knownErrors.length > 0
-                        ? knownErrors.some(e => e.severity <= 2)
+                        ? knownErrors.some(isSevereHMSError)
                           ? 'bg-status-error/20 text-status-error'
                           : 'bg-status-warning/20 text-status-warning'
                         : 'bg-status-ok/20 text-status-ok'
@@ -5490,8 +5462,36 @@ function PrinterCard({
                                 </div>
                               )}
                             </div>
-                            {/* Drying status bar */}
-                            {ams.dry_time > 0 && (
+                            {/* Drying status bar. A dry_time whose countdown is not
+                                ticking, with no active drying phase (a parked command —
+                                e.g. an H2D mid-print already powering other drying — or
+                                a paused cycle), is shown as "not running", not as an
+                                active cycle: the amber badge claiming a running dry
+                                that the AMS never began is how this was found. */}
+                            {ams.dry_time > 0 && ams.dry_countdown_stalled && (
+                              <div className="flex items-center gap-2 rounded-lg bg-slate-100 dark:bg-slate-500/10 px-2 py-1 text-[length:var(--pc-t9,9px)]" title={t('printers.drying.notRunningHint')}>
+                                <Hourglass className="w-[var(--pc-i3,0.75rem)] h-[var(--pc-i3,0.75rem)] text-slate-500 dark:text-slate-400 shrink-0" />
+                                <span className="text-slate-600 dark:text-slate-300 font-medium">{t('printers.drying.notRunning')}</span>
+                                {ams.dry_filament && (
+                                  <span className="text-slate-500/90 dark:text-slate-400/80">
+                                    {ams.dry_target_temp != null
+                                      ? t('printers.drying.targetSummary', { filament: ams.dry_filament, temp: ams.dry_target_temp })
+                                      : ams.dry_filament}
+                                  </span>
+                                )}
+                                {!status.drying_screen_only && (
+                                  <button
+                                    onClick={() => stopDryingMutation.mutate(ams.id)}
+                                    disabled={stopDryingMutation.isPending}
+                                    className="ml-auto text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors disabled:opacity-50"
+                                    title={t('printers.drying.stop')}
+                                  >
+                                    <X className="w-[var(--pc-i3,0.75rem)] h-[var(--pc-i3,0.75rem)]" />
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                            {ams.dry_time > 0 && !ams.dry_countdown_stalled && (
                               <div className="flex items-center gap-2 rounded-lg bg-amber-50 dark:bg-amber-500/10 px-2 py-1 text-[length:var(--pc-t9,9px)]">
                                 <Flame className="w-[var(--pc-i3,0.75rem)] h-[var(--pc-i3,0.75rem)] text-amber-600 dark:text-amber-400 shrink-0" />
                                 <span className="text-amber-700 dark:text-amber-400 font-medium">{t('printers.drying.active')}</span>
@@ -6059,22 +6059,31 @@ function PrinterCard({
                                 </div>
                               )}
                             </div>
-                            {/* HT AMS drying status bar */}
+                            {/* HT AMS drying status bar. Same not-running split as the
+                                standard-AMS bar above: a frozen countdown is not a
+                                running cycle. */}
                             {ams.dry_time > 0 && (
-                              <div className="flex items-center gap-1.5 overflow-hidden whitespace-nowrap rounded-lg bg-amber-50 dark:bg-amber-500/10 px-2 py-1 text-[length:var(--pc-t9,9px)]">
-                                <Flame className="w-[var(--pc-i3,0.75rem)] h-[var(--pc-i3,0.75rem)] text-amber-600 dark:text-amber-400 shrink-0" />
+                              <div className={`flex items-center gap-1.5 overflow-hidden whitespace-nowrap rounded-lg px-2 py-1 text-[length:var(--pc-t9,9px)] ${ams.dry_countdown_stalled ? 'bg-slate-100 dark:bg-slate-500/10' : 'bg-amber-50 dark:bg-amber-500/10'}`} title={ams.dry_countdown_stalled ? t('printers.drying.notRunningHint') : undefined}>
+                                {ams.dry_countdown_stalled
+                                  ? <Hourglass className="w-[var(--pc-i3,0.75rem)] h-[var(--pc-i3,0.75rem)] text-slate-500 dark:text-slate-400 shrink-0" />
+                                  : <Flame className="w-[var(--pc-i3,0.75rem)] h-[var(--pc-i3,0.75rem)] text-amber-600 dark:text-amber-400 shrink-0" />}
+                                {ams.dry_countdown_stalled && (
+                                  <span className="text-slate-600 dark:text-slate-300 text-[length:var(--pc-t8,8px)] font-medium truncate">{t('printers.drying.notRunning')}</span>
+                                )}
                                 {ams.dry_filament && (
-                                  <span className="text-amber-700/80 dark:text-amber-300/70 text-[length:var(--pc-t8,8px)] truncate">
+                                  <span className={`${ams.dry_countdown_stalled ? 'text-slate-500/90 dark:text-slate-400/80' : 'text-amber-700/80 dark:text-amber-300/70'} text-[length:var(--pc-t8,8px)] truncate`}>
                                     {ams.dry_target_temp != null
                                       ? t('printers.drying.targetSummary', { filament: ams.dry_filament, temp: ams.dry_target_temp })
                                       : ams.dry_filament}
                                   </span>
                                 )}
-                                <span className="text-amber-700/80 dark:text-amber-300/70 text-[length:var(--pc-t8,8px)] truncate">
-                                  {ams.dry_time >= 60
-                                    ? `${Math.floor(ams.dry_time / 60)}h ${ams.dry_time % 60}m`
-                                    : `${ams.dry_time}m`}
-                                </span>
+                                {!ams.dry_countdown_stalled && (
+                                  <span className="text-amber-700/80 dark:text-amber-300/70 text-[length:var(--pc-t8,8px)] truncate">
+                                    {ams.dry_time >= 60
+                                      ? `${Math.floor(ams.dry_time / 60)}h ${ams.dry_time % 60}m`
+                                      : `${ams.dry_time}m`}
+                                  </span>
+                                )}
                                 {!status.drying_screen_only && (
                                   <button
                                     onClick={() => stopDryingMutation.mutate(ams.id)}
@@ -7455,12 +7464,12 @@ function PrinterCard({
                   <div className="flex items-center justify-between mb-1">
                     <label className="text-[length:var(--pc-t10,10px)] text-white/70 font-medium">{t('printers.drying.temperature')}</label>
                     <div className="flex items-center gap-1">
-                      <input
-                        type="number"
+                      <NumberInput
                         min={45}
                         max={maxTemp}
                         value={dryingTemp}
-                        onChange={e => setDryingTemp(Math.min(maxTemp, Math.max(45, Number(e.target.value) || 45)))}
+                        onChange={setDryingTemp}
+                        fallback={45}
                         className="w-12 px-1 py-0.5 bg-bambu-dark border border-bambu-dark-tertiary rounded text-white text-[length:var(--pc-t11,11px)] text-center focus:outline-none focus:border-bambu-green [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       />
                       <span className="text-[length:var(--pc-t10,10px)] text-bambu-gray">°C</span>
@@ -7484,12 +7493,12 @@ function PrinterCard({
                   <div className="flex items-center justify-between mb-1">
                     <label className="text-[length:var(--pc-t10,10px)] text-white/70 font-medium">{t('printers.drying.duration')}</label>
                     <div className="flex items-center gap-1">
-                      <input
-                        type="number"
+                      <NumberInput
                         min={1}
                         max={24}
                         value={dryingDuration}
-                        onChange={e => setDryingDuration(Math.min(24, Math.max(1, Number(e.target.value) || 1)))}
+                        onChange={setDryingDuration}
+                        fallback={1}
                         className="w-10 px-1 py-0.5 bg-bambu-dark border border-bambu-dark-tertiary rounded text-white text-[length:var(--pc-t11,11px)] text-center focus:outline-none focus:border-bambu-green [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       />
                       <span className="text-[length:var(--pc-t10,10px)] text-bambu-gray">{t('printers.drying.hours')}</span>

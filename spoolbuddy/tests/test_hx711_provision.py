@@ -31,13 +31,19 @@ def setup(tmp_path, monkeypatch):
         hardware_ready=True,
         dkms_status="",
         cleanup_error=False,
+        shadowed=False,
     )
 
     def command(*args, check=True, capture_output=False):
         fixture.calls.append(args)
         code = 0
+        stdout = ""
         if args[0] == "modinfo":
             code = 0 if fixture.stock else 1
+            if fixture.stock:
+                stdout = str(stock_path(fixture))
+                if args[-1] == "hx711" and fixture.shadowed:
+                    stdout = str(provision.MODULES / release / "updates/foreign/hx711.ko")
         elif args[:3] == ("systemctl", "is-active", "--quiet"):
             code = 0 if fixture.active else 3
         elif args[:2] == ("systemctl", "restart") and not fixture.hardware_ready:
@@ -52,7 +58,9 @@ def setup(tmp_path, monkeypatch):
             code = 1
         if check and code:
             raise subprocess.CalledProcessError(code, args)
-        return SimpleNamespace(returncode=code, stdout=fixture.dkms_status if args[:2] == ("dkms", "status") else "")
+        return SimpleNamespace(
+            returncode=code, stdout=fixture.dkms_status if args[:2] == ("dkms", "status") else stdout
+        )
 
     monkeypatch.setattr(provision, "run", command)
     add_headers(fixture, release)
@@ -65,6 +73,17 @@ def add_headers(setup, release):
     (headers.parent / "kernel").mkdir()
     for name in ("Makefile", "Module.symvers"):
         (headers / name).touch()
+
+
+def stock_path(setup):
+    return setup.p.MODULES / "6.18.50+rpt-rpi-v8/kernel/drivers/iio/adc/hx711.ko.xz"
+
+
+def add_stock(setup):
+    setup.stock = True
+    path = stock_path(setup)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.touch()
 
 
 def test_install_builds_running_and_pending_kernel_and_orders_boot(setup):
@@ -92,7 +111,7 @@ def test_repeat_install_keeps_source_and_restores_running_daemon(setup):
 
 
 def test_os_module_needs_no_dkms_source(setup):
-    setup.stock = True
+    add_stock(setup)
     setup.p.install()
     assert not any(call[0] == "dkms" for call in setup.calls)
     assert not setup.p.SOURCE.exists()
@@ -290,3 +309,86 @@ def test_supported_kernel_flavours(setup, release, expected):
 def test_unsupported_kernel_flavours(setup, release):
     with pytest.raises(RuntimeError):
         setup.p.kernel_flavour(release)
+
+
+def test_stock_module_replaces_managed_dkms_on_repeat_install(setup):
+    setup.p.install()
+    setup.active = True
+    setup.calls.clear()
+    add_stock(setup)
+    setup.p.install()
+    assert ("modinfo", "-F", "filename", str(stock_path(setup))) in setup.calls
+    assert ("dkms", "remove", setup.p.MODULE, "--all") in setup.calls
+    assert not any(c[:2] == ("dkms", "install") for c in setup.calls)
+    assert setup.calls.index(("systemctl", "stop", setup.p.UNIT)) < setup.calls.index(("modprobe", "-r", "hx711"))
+    assert not setup.p.SOURCE.exists()
+    assert not setup.p.read_state()["dkms"]
+    assert setup.calls[-1] == ("systemctl", "start", "spoolbuddy.service")
+    setup.calls.clear()
+    setup.p.install()
+    assert not any(c[0] == "dkms" for c in setup.calls)
+
+
+def test_stock_migration_activation_failure_restores_dkms_and_state(setup):
+    setup.p.install()
+    before = setup.p.STATE.read_bytes()
+    add_stock(setup)
+    setup.fail = ("systemctl", "enable")
+    with pytest.raises(subprocess.CalledProcessError):
+        setup.p.install()
+    assert setup.p.STATE.read_bytes() == before
+    assert setup.p.SOURCE.exists()
+    assert setup.p.read_state()["dkms"]
+    assert ("dkms", "install", setup.p.MODULE, "-k", "6.18.50+rpt-rpi-v8") in setup.calls
+
+
+def test_foreign_module_shadowing_stock_aborts_migration(setup):
+    setup.p.install()
+    before = setup.p.STATE.read_bytes()
+    add_stock(setup)
+    setup.shadowed = True
+    with pytest.raises(RuntimeError, match="shadowed"):
+        setup.p.install()
+    assert setup.p.STATE.read_bytes() == before
+    assert setup.p.read_state()["dkms"]
+
+
+def test_dkms_module_alone_is_not_mistaken_for_stock(setup):
+    setup.p.install()
+    setup.calls.clear()
+    setup.stock = True  # modinfo by name succeeds, but only updates/dkms exists.
+    setup.shadowed = True
+    setup.p.install()
+    assert not any(c[:2] == ("dkms", "remove") for c in setup.calls)
+    assert setup.p.read_state()["dkms"]
+
+
+def test_stock_symlink_outside_kernel_tree_is_not_trusted(setup, tmp_path):
+    add_stock(setup)
+    path = stock_path(setup)
+    path.unlink()
+    foreign = tmp_path / "foreign.ko"
+    foreign.touch()
+    path.symlink_to(foreign)
+    assert setup.p.stock_module("6.18.50+rpt-rpi-v8") is None
+
+
+def test_fresh_install_preserves_foreign_driver_that_shadows_stock(setup):
+    add_stock(setup)
+    setup.shadowed = True
+    with pytest.raises(RuntimeError, match="shadowed"):
+        setup.p.install()
+    assert not setup.p.STATE.exists()
+    assert not any(c[0] == "dkms" for c in setup.calls)
+
+
+@pytest.mark.parametrize("failure", [("dkms", "remove"), ("modprobe", "-r")])
+def test_migration_failure_keeps_previous_ownership_and_source(setup, failure):
+    setup.p.install()
+    before = setup.p.STATE.read_bytes()
+    add_stock(setup)
+    setup.fail = failure
+    with pytest.raises(subprocess.CalledProcessError):
+        setup.p.install()
+    assert setup.p.STATE.read_bytes() == before
+    assert setup.p.read_state()["dkms"]

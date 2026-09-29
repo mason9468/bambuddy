@@ -106,6 +106,28 @@ def build_for_installed_kernels(release):
         run("dkms", "install", MODULE, "-k", target)
 
 
+def stock_module(release):
+    """Look in the kernel tree even when updates/dkms shadows the stock module."""
+    kernel = (MODULES / release / "kernel").resolve()
+    for candidate in sorted(kernel.glob("drivers/iio/adc/hx711.ko*")):
+        if not candidate.resolve().is_relative_to(kernel):
+            continue
+        result = run("modinfo", "-F", "filename", str(candidate), check=False, capture_output=True)
+        if result.returncode == 0 and Path(result.stdout.strip()).resolve() == candidate.resolve():
+            return candidate
+    result = run("modinfo", "-k", release, "-F", "filename", "hx711", check=False, capture_output=True)
+    if result.returncode == 0 and result.stdout.strip() == "(builtin)":
+        return "(builtin)"
+    return None
+
+
+def verify_stock_selected(release, stock):
+    selected = run("modinfo", "-k", release, "-F", "filename", "hx711", capture_output=True).stdout.strip()
+    matches = selected == "(builtin)" if stock == "(builtin)" else Path(selected).resolve() == stock.resolve()
+    if not matches:
+        raise RuntimeError("Stock HX711 is still shadowed by another module; preserving existing setup")
+
+
 def install(data_pin=5, clock_pin=6):
     validate_pins(data_pin, clock_pin)
     release = platform.release()
@@ -124,6 +146,7 @@ def install(data_pin=5, clock_pin=6):
     )
     new_source = False
     registration_attempted = False
+    migration_attempted = False
     app_stopped = hardware_touched = assets_touched = False
     try:
         # Build and validate all inputs before interrupting an existing daemon.
@@ -144,10 +167,12 @@ def install(data_pin=5, clock_pin=6):
                 str(stage / "wiring.dts"),
             )
             # A fresh Pi may not ship this module; absence is an install step.
-            stock = run("modinfo", "hx711", check=False, capture_output=True).returncode == 0
+            stock = stock_module(release)
+            if stock and not state["dkms"]:
+                verify_stock_selected(release, stock)
             if not stock:
                 print("HX711 driver not installed for this kernel; building and installing it now.", flush=True)
-            if state["dkms"] or not stock:
+            if not stock:
                 if not SOURCE.exists():
                     # DKMS can retain a registered/broken package after its
                     # source directory disappears. Never claim or remove it
@@ -170,6 +195,17 @@ def install(data_pin=5, clock_pin=6):
             if previous:
                 hardware_touched = True
                 run("systemctl", "stop", UNIT)
+            if stock and state["dkms"]:
+                # Stop the owned overlay before replacing the loaded module.
+                # Keep source until state is saved so failures can roll back.
+                migration_attempted = True
+                run("dkms", "remove", MODULE, "--all")
+                run("depmod", "-a", release)
+                if stock != "(builtin)":
+                    run("modprobe", "-r", "hx711")
+                verify_stock_selected(release, stock)
+                state = {**state, "dkms": False}
+                print("Using the kernel's HX711 driver; removed the temporary DKMS package.", flush=True)
             staged = {
                 "setup.sh": (PACKAGE / "setup.sh").read_bytes(),
                 "spoolbuddy-hx711.dtbo": (stage / "spoolbuddy-hx711.dtbo").read_bytes(),
@@ -185,6 +221,8 @@ def install(data_pin=5, clock_pin=6):
                 "data_pin": data_pin,
                 "clock_pin": clock_pin,
             }
+            if migration_attempted and SOURCE.exists():
+                shutil.rmtree(SOURCE)
             save(state)
             run("systemctl", "daemon-reload")
             run("systemctl", "enable", UNIT)
@@ -217,6 +255,14 @@ def install(data_pin=5, clock_pin=6):
                 # Keep enough ownership information to retry/remove safely.
                 save({**(previous or {"assets": {}}), "dkms": True})
                 print(f"DKMS cleanup failed; source retained at {SOURCE}. Rerun setup after checking dkms status.")
+        if migration_attempted:
+            if not SOURCE.exists():
+                shutil.copytree(PACKAGE / "module", SOURCE)
+            try:
+                build_for_installed_kernels(release)
+            except Exception as error:
+                save({**(previous or {"assets": {}}), "dkms": True})
+                print(f"HX711 DKMS restore failed: {error}. Source retained; rerun setup to repair.")
         if hardware_touched and hardware_was_running:
             run("systemctl", "start", UNIT, check=False)
         raise

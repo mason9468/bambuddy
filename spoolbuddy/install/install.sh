@@ -67,7 +67,6 @@ KIOSK_URL=""             # derived from $BAMBUDDY_URL/spoolbuddy?token=$API_KEY
 SCALE_DRIVER=""         # selected explicitly, from an existing install, or by prompt
 HX711_DATA_PIN="5"
 HX711_CLOCK_PIN="6"
-HX711_GPIOCHIP="0"
 SSH_PUBKEY=""            # Bambuddy's SSH public key for remote updates
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -573,7 +572,7 @@ create_spoolbuddy_env() {
     local env_file="$INSTALL_PATH/spoolbuddy/.env"
 
     SPOOLBUDDY_INSTALL_URL="$BAMBUDDY_URL" SPOOLBUDDY_INSTALL_KEY="$API_KEY" \
-        "$PYTHON_CMD" - "$env_file" "$SCALE_DRIVER" "$HX711_DATA_PIN" "$HX711_CLOCK_PIN" "$HX711_GPIOCHIP" <<'PYCONFIG'
+        "$PYTHON_CMD" - "$env_file" "$SCALE_DRIVER" "$HX711_DATA_PIN" "$HX711_CLOCK_PIN" <<'PYCONFIG'
 import os
 import sys
 import tempfile
@@ -586,7 +585,6 @@ values = {
     "SPOOLBUDDY_SCALE_DRIVER": sys.argv[2],
     "SPOOLBUDDY_HX711_DATA_PIN": sys.argv[3],
     "SPOOLBUDDY_HX711_CLOCK_PIN": sys.argv[4],
-    "SPOOLBUDDY_HX711_GPIOCHIP": sys.argv[5],
 }
 lines = path.read_text().splitlines() if path.exists() else ["# SpoolBuddy Configuration", "SPOOLBUDDY_I2C_BUS=1"]
 # Keep identity, calibration and other existing settings; replace all duplicate
@@ -1471,7 +1469,7 @@ choose_scale_driver() {
     if [[ -r "$env_file" ]]; then
         saved_driver=$(sed -n 's/^SPOOLBUDDY_SCALE_DRIVER=//p' "$env_file" | tail -n1 | tr -d '\r"')
         # Retain the existing HX711 wiring when re-running the installer.
-        for variable in HX711_DATA_PIN HX711_CLOCK_PIN HX711_GPIOCHIP; do
+        for variable in HX711_DATA_PIN HX711_CLOCK_PIN; do
             key="SPOOLBUDDY_$variable"
             value=$(sed -n "s/^${key}=//p" "$env_file" | tail -n1 | tr -d '\r"')
             if [[ -n "$value" ]]; then

@@ -18,8 +18,8 @@ class ScaleReader:
         driver: str = "nau7802",
         data_pin: int = 5,
         clock_pin: int = 6,
-        gpiochip: int = 0,
     ):
+        self._driver = driver
         self._lock = RLock()
         self._has_sample = False
         self._scale = None
@@ -35,7 +35,7 @@ class ScaleReader:
             if driver == "hx711":
                 from .hx711 import HX711
 
-                self._scale = HX711(data_pin, clock_pin, gpiochip)
+                self._scale = HX711(data_pin, clock_pin)
             elif driver == "nau7802":
                 from .nau7802 import NAU7802
 
@@ -48,7 +48,10 @@ class ScaleReader:
         except Exception as e:
             self._initialization_error = str(e)
             self.close()
-            logger.info("Scale not available: %s", e)
+            if driver == "hx711":
+                logger.warning("HX711 scale unavailable: %s", e)
+            else:
+                logger.info("Scale not available: %s", e)
 
     @property
     def ok(self) -> bool:
@@ -146,7 +149,10 @@ class ScaleReader:
 
         except Exception as e:
             logger.debug("Scale read error: %s", e)
-            self._ok = False
-            self._samples.clear()
-            self._stability_history.clear()
+            if self._driver == "hx711":
+                if self._ok:
+                    logger.warning("HX711 scale read failed: %s", e)
+                self._ok = False
+                self._samples.clear()
+                self._stability_history.clear()
             return None

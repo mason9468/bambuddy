@@ -187,9 +187,7 @@ async def scale_poll_loop(config: Config, api: APIClient, shared: dict):
         return
 
     last_report = 0.0
-    last_sent = 0.0
     last_reported_grams: float | None = None
-    last_reported_stable: bool | None = None
     last_wake_grams: float | None = None
     REPORT_THRESHOLD = 2.0  # Only report if weight changed by more than this (grams)
     WAKE_THRESHOLD = 50.0  # Only wake display on large changes (spool placed/removed, not sensor bounce)
@@ -205,7 +203,7 @@ async def scale_poll_loop(config: Config, api: APIClient, shared: dict):
                     # Only send when weight changed meaningfully
                     weight_changed = last_reported_grams is None or abs(grams - last_reported_grams) >= REPORT_THRESHOLD
 
-                    if weight_changed or stable != last_reported_stable or now - last_sent >= 10.0:
+                    if weight_changed:
                         # Wake display only on STABLE large weight changes (spool
                         # placed/removed). Without the stability gate, a noisy load
                         # cell that bounces ≥50g around a midpoint repeatedly trips
@@ -229,8 +227,6 @@ async def scale_poll_loop(config: Config, api: APIClient, shared: dict):
                             raw_adc=raw_adc,
                         )
                         last_reported_grams = grams
-                        last_reported_stable = stable
-                        last_sent = now
                     last_report = now
 
             await asyncio.sleep(config.scale_read_interval)
@@ -448,7 +444,6 @@ async def main():
         driver=config.scale_driver,
         data_pin=config.hx711_data_pin,
         clock_pin=config.hx711_clock_pin,
-        gpiochip=config.hx711_gpiochip,
         tare_offset=config.tare_offset,
         calibration_factor=config.calibration_factor,
     )

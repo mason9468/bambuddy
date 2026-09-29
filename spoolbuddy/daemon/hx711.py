@@ -6,6 +6,7 @@ converted to the signed counts used by existing tare/calibration settings.
 """
 
 import struct
+import subprocess
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
@@ -15,15 +16,11 @@ RESERVED_PINS = frozenset((0, 1, 2, 3, 7, 8, 9, 10, 11, 23, 24, 25))
 
 
 class HX711:
-    def __init__(self, data_pin: int = 5, clock_pin: int = 6, gpiochip: int = 0):
+    def __init__(self, data_pin: int = 5, clock_pin: int = 6):
         if not (0 <= data_pin <= 27 and 0 <= clock_pin <= 27) or data_pin == clock_pin:
             raise ValueError("HX711 requires two different GPIO numbers between 0 and 27")
         if {data_pin, clock_pin} & RESERVED_PINS:
             raise ValueError("HX711 pins conflict with reserved I2C/SPI or PN5180 wiring")
-        if gpiochip < 0:
-            raise ValueError("HX711 gpiochip must be non-negative")
-        # gpiochip is accepted for compatibility with the earlier local config.
-        # The kernel resolves its GPIO controller through the device tree.
         self._data_pin = data_pin
         self._clock_pin = clock_pin
         self._device: Path | None = None
@@ -55,6 +52,14 @@ class HX711:
 
     def init(self):
         self.close()
+        service = subprocess.run(
+            ["systemctl", "is-failed", "--quiet", "spoolbuddy-hx711.service"],
+            check=False,
+            capture_output=True,
+            timeout=5,
+        )
+        if service.returncode == 0:
+            raise RuntimeError("spoolbuddy-hx711.service failed; check journalctl -u spoolbuddy-hx711.service")
         matches = []
         for entry in (SYSFS_ROOT / "bus/iio/devices").glob("iio:device*"):
             device = entry.resolve()

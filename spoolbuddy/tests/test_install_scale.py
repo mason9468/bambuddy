@@ -54,15 +54,14 @@ def test_unattended_fresh_install_keeps_nau7802_default(tmp_path):
 def test_reinstall_preserves_hx711_and_custom_wiring(tmp_path):
     (tmp_path / "spoolbuddy").mkdir()
     (tmp_path / "spoolbuddy/.env").write_text(
-        'SPOOLBUDDY_SCALE_DRIVER="hx711"\nSPOOLBUDDY_HX711_DATA_PIN=17\n'
-        "SPOOLBUDDY_HX711_CLOCK_PIN=27\nSPOOLBUDDY_HX711_GPIOCHIP=4\n"
+        'SPOOLBUDDY_SCALE_DRIVER="hx711"\nSPOOLBUDDY_HX711_DATA_PIN=17\nSPOOLBUDDY_HX711_CLOCK_PIN=27\n'
     )
     result = run_installer(
         tmp_path,
-        'parse_args --yes\nchoose_scale_driver\necho "SELECTED=$SCALE_DRIVER:$HX711_DATA_PIN:$HX711_CLOCK_PIN:$HX711_GPIOCHIP"',
+        'parse_args --yes\nchoose_scale_driver\necho "SELECTED=$SCALE_DRIVER:$HX711_DATA_PIN:$HX711_CLOCK_PIN"',
     )
     assert result.returncode == 0, result.stderr
-    assert "SELECTED=hx711:17:27:4" in result.stdout
+    assert "SELECTED=hx711:17:27" in result.stdout
 
 
 def test_interactive_selection_retries_invalid_choice(tmp_path):

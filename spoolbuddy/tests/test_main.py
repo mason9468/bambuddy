@@ -323,7 +323,7 @@ class TestScalePollLoopWakeGating:
 
 
 @pytest.mark.asyncio
-async def test_scale_reports_stable_transition_and_periodic_refresh():
+async def test_scale_keeps_weight_threshold_without_stability_or_periodic_reports():
     config = _make_config(scale_read_interval=0.0, scale_report_interval=0.0)
     scale = MagicMock()
     scale.ok = True
@@ -344,8 +344,8 @@ async def test_scale_reports_stable_transition_and_periodic_refresh():
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-    assert [c.kwargs["raw_adc"] for c in api.scale_reading.await_args_list] == [100, 101, 103]
-    assert [c.kwargs["stable"] for c in api.scale_reading.await_args_list] == [False, True, True]
+    assert [c.kwargs["raw_adc"] for c in api.scale_reading.await_args_list] == [100]
+    assert [c.kwargs["stable"] for c in api.scale_reading.await_args_list] == [False]
 
 
 @pytest.mark.asyncio
@@ -436,3 +436,31 @@ async def test_hx711_diagnostic_failure_reaches_ui_without_interrupting_nfc(fail
     nfc.close.assert_not_called()
     assert shared["nfc"] is nfc
     assert not shared.get("nfc_scan_paused")
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_reports_failed_hx711_scale_without_disabling_nfc():
+    config = _make_config(scale_driver="hx711")
+    api = _make_api()
+    scale = MagicMock()
+    scale.ok = False
+    nfc = MagicMock()
+    nfc.ok = True
+    completed = asyncio.Event()
+
+    async def heartbeat(**kwargs):
+        assert kwargs["scale_ok"] is False
+        assert kwargs["nfc_ok"] is True
+        completed.set()
+        return None
+
+    api.heartbeat.side_effect = heartbeat
+    task = asyncio.create_task(
+        heartbeat_loop(config, api, time.monotonic(), {"scale": scale, "nfc": nfc, "display": MagicMock()})
+    )
+    try:
+        await asyncio.wait_for(completed.wait(), timeout=2)
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task

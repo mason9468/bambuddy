@@ -37,13 +37,13 @@ const BLANK_OPTIONS = [
 function ScaleHardwareType({ device }: { device: SpoolBuddyDevice }) {
   const { t } = useTranslation();
   return (
-      <div className="bg-zinc-800 rounded-lg px-3 py-2 flex justify-between text-sm">
-        <span className="text-zinc-400">{t('spoolbuddy.settings.scale')} · {t('spoolbuddy.settings.type')}</span>
-        <span className="text-zinc-200 font-mono">
-          {device.system_stats?.scale_driver === 'hx711' ? 'HX711'
-            : device.system_stats?.scale_driver === 'nau7802' ? 'NAU7802' : '—'}
-        </span>
-      </div>
+    <div className="bg-zinc-800 rounded-lg px-3 py-2 flex justify-between text-sm">
+      <span className="text-zinc-400">{t('spoolbuddy.settings.scale')} · {t('spoolbuddy.settings.type')}</span>
+      <span className="text-zinc-200 font-mono">
+        {device.system_stats?.scale_driver === 'hx711' ? 'HX711'
+          : device.system_stats?.scale_driver === 'nau7802' ? 'NAU7802' : '—'}
+      </span>
+    </div>
   );
 }
 
@@ -87,7 +87,6 @@ function DeviceTab({ device }: { device: SpoolBuddyDevice }) {
 
   return (
     <div className="space-y-2">
-      <ScaleHardwareType device={device} />
       {/* NFC Reader + Device Info side by side */}
       <div className="grid grid-cols-2 gap-2">
         {/* NFC Reader */}

@@ -2,6 +2,7 @@
 
 import struct
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from daemon import hx711
@@ -11,6 +12,7 @@ from daemon.hx711 import HX711
 @pytest.fixture
 def sysfs(tmp_path, monkeypatch):
     monkeypatch.setattr(hx711, "SYSFS_ROOT", tmp_path)
+    monkeypatch.setattr(hx711.subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=1))
     (tmp_path / "bus/iio/devices").mkdir(parents=True)
     return tmp_path
 
@@ -126,7 +128,7 @@ def test_close_is_idempotent_and_does_not_remove_kernel_device(sysfs):
         scale.read_raw()
 
 
-@pytest.mark.parametrize("args", [(5, 5, 0), (-1, 6, 0), (5, 28, 0), (5, 6, -1), (23, 6, 0), (5, 11, 0)])
+@pytest.mark.parametrize("args", [(5, 5), (-1, 6), (5, 28), (23, 6), (5, 11)])
 def test_conflicting_pins_rejected(args):
     with pytest.raises(ValueError):
         HX711(*args)
@@ -147,3 +149,10 @@ def test_kernel_reader_through_existing_scale_calibration(sysfs):
     assert scale.read() is None
     assert not scale.ok
     scale.close()
+
+
+def test_failed_hardware_service_rejected_even_if_iio_device_exists(sysfs, monkeypatch):
+    add_device(sysfs)
+    monkeypatch.setattr(hx711.subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=0))
+    with pytest.raises(RuntimeError, match="spoolbuddy-hx711.service failed"):
+        HX711().init()

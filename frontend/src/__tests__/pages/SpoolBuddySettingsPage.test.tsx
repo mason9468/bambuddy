@@ -319,7 +319,8 @@ describe('Scale hardware identity', () => {
       { ...device, system_stats: { ...device.system_stats, scale_driver: driver } },
     ]);
     renderPage();
-    expect(await screen.findByText(driver.toUpperCase())).toBeInTheDocument();
+    await screen.findByText("spoolbuddy-pi");
+    expect(screen.queryByText(driver.toUpperCase())).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Scale', exact: true }));
     expect(screen.getByText(driver.toUpperCase())).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Tare', exact: true })).toBeInTheDocument();

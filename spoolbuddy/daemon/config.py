@@ -35,7 +35,6 @@ class Config:
     scale_driver: str = "nau7802"
     hx711_data_pin: int = 5
     hx711_clock_pin: int = 6
-    hx711_gpiochip: int = 0
 
     tare_offset: int = 0
     calibration_factor: float = 1.0
@@ -60,11 +59,10 @@ class Config:
         if cfg.scale_driver == "hx711":
             cfg.hx711_data_pin = int(os.environ.get("SPOOLBUDDY_HX711_DATA_PIN", "5"))
             cfg.hx711_clock_pin = int(os.environ.get("SPOOLBUDDY_HX711_CLOCK_PIN", "6"))
-            cfg.hx711_gpiochip = int(os.environ.get("SPOOLBUDDY_HX711_GPIOCHIP", "0"))
             if not (0 <= cfg.hx711_data_pin <= 27 and 0 <= cfg.hx711_clock_pin <= 27):
                 raise ValueError("HX711 GPIO numbers must be between 0 and 27")
-            if cfg.hx711_data_pin == cfg.hx711_clock_pin or cfg.hx711_gpiochip < 0:
-                raise ValueError("HX711 needs different pins and a non-negative gpiochip")
+            if cfg.hx711_data_pin == cfg.hx711_clock_pin:
+                raise ValueError("HX711 needs different data and clock pins")
 
         # Default device_id from MAC address
         if not cfg.device_id:

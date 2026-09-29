@@ -176,7 +176,7 @@ def test_scale_driver_selection(monkeypatch, driver):
     monkeypatch.setenv("SPOOLBUDDY_SCALE_DRIVER", driver)
     cfg = Config.load()
     assert cfg.scale_driver == driver
-    assert (cfg.hx711_data_pin, cfg.hx711_clock_pin, cfg.hx711_gpiochip) == (5, 6, 0)
+    assert (cfg.hx711_data_pin, cfg.hx711_clock_pin) == (5, 6)
 
 
 @pytest.mark.parametrize(
@@ -185,7 +185,6 @@ def test_scale_driver_selection(monkeypatch, driver):
         ("SPOOLBUDDY_SCALE_DRIVER", "typo"),
         ("SPOOLBUDDY_HX711_DATA_PIN", "6"),
         ("SPOOLBUDDY_HX711_CLOCK_PIN", "99"),
-        ("SPOOLBUDDY_HX711_GPIOCHIP", "-1"),
     ],
 )
 def test_invalid_scale_configuration(monkeypatch, name, value):

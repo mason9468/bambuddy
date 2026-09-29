@@ -232,7 +232,6 @@ def load_scale_environment():
         "SPOOLBUDDY_SCALE_DRIVER",
         "SPOOLBUDDY_HX711_DATA_PIN",
         "SPOOLBUDDY_HX711_CLOCK_PIN",
-        "SPOOLBUDDY_HX711_GPIOCHIP",
         "SPOOLBUDDY_I2C_BUS",
     }
     if path.is_file():
@@ -251,7 +250,6 @@ def hx711_diagnostic():
     scale = HX711(
         data_pin=int(os.environ.get("SPOOLBUDDY_HX711_DATA_PIN", "5")),
         clock_pin=int(os.environ.get("SPOOLBUDDY_HX711_CLOCK_PIN", "6")),
-        gpiochip=int(os.environ.get("SPOOLBUDDY_HX711_GPIOCHIP", "0")),
     )
     try:
         print("HX711 Scale Diagnostic")

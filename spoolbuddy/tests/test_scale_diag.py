@@ -61,7 +61,7 @@ def test_hx711_cli_samples_and_closes_reader(diagnostic, monkeypatch, capsys):
     factory = MagicMock(return_value=reader)
     monkeypatch.setattr(hx711, "HX711", factory)
     diagnostic.hx711_diagnostic()
-    factory.assert_called_once_with(data_pin=5, clock_pin=6, gpiochip=0)
+    factory.assert_called_once_with(data_pin=5, clock_pin=6)
     assert reader.read_raw.call_count == 10
     reader.close.assert_called_once()
     output = capsys.readouterr().out

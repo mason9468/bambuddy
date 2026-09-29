@@ -89,3 +89,24 @@ def test_failed_initialization_diagnostic_retains_actionable_error(hardware):
     with pytest.raises(RuntimeError, match="check spoolbuddy-hx711.service"):
         scale.diagnostic()
     hardware.read_raw.assert_not_called()
+
+
+def test_nau7802_transient_error_preserves_average_and_stability(monkeypatch):
+    module = MagicMock()
+    chip = module.NAU7802.return_value
+    chip.read_raw.side_effect = [100, OSError("transient I2C error"), 200]
+    monkeypatch.setitem(sys.modules, "daemon.nau7802", module)
+    scale = ScaleReader()
+    scale.read()
+    history = list(scale._stability_history)
+    assert scale.read() is None
+    assert scale.ok
+    assert list(scale._stability_history) == history
+    assert scale.read() == (150.0, False, 200)
+
+
+def test_hx711_initialization_failure_warns_and_marks_scale_unavailable(hardware, caplog):
+    hardware.init.side_effect = RuntimeError("Check spoolbuddy-hx711.service")
+    scale = ScaleReader(driver="hx711")
+    assert not scale.ok
+    assert any(r.levelname == "WARNING" and "spoolbuddy-hx711.service" in r.message for r in caplog.records)
